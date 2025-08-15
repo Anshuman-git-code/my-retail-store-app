@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # Frontend - Web Interface
+  ui:
+    image: public.ecr.aws/aws-containers/retail-store-sample-ui:1.0.0
+    container_name: retail-ui
+    ports:
+      - "8888:8080"  # Access the app at http://localhost:8888
+    environment:
+      - CATALOG_ENDPOINT=http://catalog:8080
+      - CART_ENDPOINT=http://cart:8080
+      - CHECKOUT_ENDPOINT=http://checkout:8080
+      - ORDERS_ENDPOINT=http://orders:8080
+    depends_on:
+      - catalog
+      - cart
+      - checkout
+      - orders
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # Product Catalog Service
+  catalog:
+    image: public.ecr.aws/aws-containers/retail-store-sample-catalog:1.0.0
+    container_name: retail-catalog
+    environment:
+      - DB_ENDPOINT=mysql:3306
+      - DB_USER=catalog_user
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=catalog
+    depends_on:
+      - mysql
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # Shopping Cart Service
+  cart:
+    image: public.ecr.aws/aws-containers/retail-store-sample-cart:1.0.0
+    container_name: retail-cart
+    environment:
+      - SPRING_PROFILES_ACTIVE=dynamodb
+      - CARTS_DYNAMODB_TABLENAME=carts
+      - CARTS_DYNAMODB_CREATETABLE=true
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+      - CARTS_DYNAMODB_ENDPOINT=http://dynamodb:8000
+    depends_on:
+      - dynamodb
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # Order Processing Service
+  orders:
+    image: public.ecr.aws/aws-containers/retail-store-sample-orders:1.0.0
+    container_name: retail-orders
+    environment:
+      - SPRING_PROFILES_ACTIVE=mysql
+      - SPRING_DATASOURCE_WRITER_URL=jdbc:mariadb://mysql:3306/orders
+      - SPRING_DATASOURCE_WRITER_USERNAME=orders_user
+      - SPRING_DATASOURCE_WRITER_PASSWORD=${DB_PASSWORD}
+      - SPRING_DATASOURCE_READER_URL=jdbc:mariadb://mysql:3306/orders
+      - SPRING_DATASOURCE_READER_USERNAME=orders_user
+      - SPRING_DATASOURCE_READER_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      - mysql
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # Checkout Orchestration Service
+  checkout:
+    image: public.ecr.aws/aws-containers/retail-store-sample-checkout:1.0.0
+    container_name: retail-checkout
+    environment:
+      - ENDPOINTS_ORDERS=http://orders:8080
+      - ENDPOINTS_CARTS=http://cart:8080
+    depends_on:
+      - orders
+      - cart
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # MySQL Database (for catalog and orders)
+  mysql:
+    image: mysql:8.0
+    container_name: retail-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_DATABASE=catalog
+      - MYSQL_USER=catalog_user
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "3306:3306"  # Optional: Access MySQL directly
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+  # DynamoDB Local (for cart service)
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: retail-dynamodb
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    ports:
+      - "8000:8000"  # Optional: Access DynamoDB directly
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+# Network for service communication
+networks:
+  retail-network:
+    driver: bridge
+
+# Persistent storage for database
+volumes:
+  mysql_data:
+    driver: local
